@@ -33,10 +33,12 @@ dsh plugin --profile web add dsh-tray-launcher
 - **Desktop icon** — `DSH-Web-Tray.lnk` targeting `wscript.exe` + a hidden vbs, so no console window ever appears.
 - **System tray** — whale icon with a context menu:
   - Open Web UI (auto-attaches the one-time token URL)
+  - Restart DSH Web service (runs the built-in tray restart flow: Exit, then relaunch)
   - Stop DSH Web service
   - Exit (closes the DSH browser tab(s), stops the server, removes the icon)
 - **Settings card** — enable toggle, GUI URL, launch profile, custom `.ico`; "Create desktop icon" is idempotent (safe to re-run).
-- **Loopback-only** install route, so a LAN-exposed `dsh web` never exposes the file-writing / shortcut-creating endpoint to remote browsers.
+- **Loopback-only** install/control routes, so a LAN-exposed `dsh web` never exposes the file-writing or tray-control endpoints to remote browsers.
+- **Callable control API** — new `exit` / `restart` routes let a local caller ask the running tray instance to perform the same shutdown flow as the tray menu `Exit`, or to exit and relaunch itself.
 
 ---
 
@@ -85,10 +87,32 @@ tray-launcher/
 ├── start-dsh-tray.vbs         # vbs wrapper that launches dsh-web-tray.ps1 hidden
 ├── install-shortcut.ps1       # script that creates the desktop .lnk
 ├── DeepSeekHarness-WhaleGirl.ico
+├── tray-control.json          # host-written tray control command (exit / restart)
 └── dsh-web.out.log / dsh-web.err.log   # server logs
 ```
 
 Desktop shortcut: `%USERPROFILE%\Desktop\DSH-Web-Tray.lnk` (OneDrive desktop is detected).
+
+## Control API
+
+All control endpoints are:
+
+- `POST` only
+- loopback-only
+- restart-only routes that do not create a new desktop shortcut
+
+Endpoints:
+
+- `POST /api/dsh-tray-launcher/install`
+  - generate/refresh the tray script, vbs, icon, and create the desktop shortcut
+- `POST /api/dsh-tray-launcher/exit`
+  - ask the running tray instance to perform the same flow as the tray menu `Exit`
+  - if no tray instance is running, fall back to stopping the target profile's `dsh web` directly
+- `POST /api/dsh-tray-launcher/restart`
+  - ask the running tray instance to perform “Exit, then relaunch itself”
+  - if no tray instance is running, fall back to stopping `dsh web` directly and then running `wscript.exe + start-dsh-tray.vbs`
+
+The `restart` route never calls `install-shortcut.ps1`, so it does not create a new desktop shortcut.
 
 ---
 

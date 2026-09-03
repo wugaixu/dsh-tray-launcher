@@ -20,6 +20,7 @@ $url      = {{URL}}
 $profile  = {{PROFILE}}
 $logDir   = $PSScriptRoot
 $script:tokenUrl = $url
+$script:controlPath = Join-Path $PSScriptRoot 'tray-control.json'
 
 # DSH home: honour $DSH_HOME, else the platform default (~/.dsh).
 $dshHome = if ($env:DSH_HOME -and $env:DSH_HOME.Trim() -ne '') { $env:DSH_HOME } else { Join-Path $env:USERPROFILE '.dsh' }
@@ -70,6 +71,15 @@ function Start-DshWeb {
     }
 }
 
+function Start-TrayLauncher {
+    $vbs = Join-Path $PSScriptRoot 'start-dsh-tray.vbs'
+    $wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
+    if (-not (Test-Path $vbs)) { return $false }
+    if (-not (Test-Path $wscript)) { return $false }
+    Start-Process -FilePath $wscript -ArgumentList @('"' + $vbs + '"') -WindowStyle Hidden | Out-Null
+    return $true
+}
+
 function Wait-DshReady {
     for ($i = 0; $i -lt 40; $i++) {
         try {
@@ -111,6 +121,39 @@ function Close-DshBrowserTabs {
     } catch { }
 }
 
+function Invoke-ExitFlow {
+    param([switch]$Restart)
+    $script:notifyIcon.Visible = $false
+    Close-DshBrowserTabs
+    Stop-DshWeb
+    if ($Restart) {
+        [void](Start-TrayLauncher)
+    }
+    [System.Windows.Forms.Application]::Exit()
+}
+
+function Consume-ControlCommand {
+    if (-not (Test-Path $script:controlPath)) { return }
+    try {
+        $raw = Get-Content $script:controlPath -Raw -ErrorAction Stop
+        Remove-Item $script:controlPath -Force -ErrorAction SilentlyContinue
+        $action = $null
+        try {
+            $payload = $raw | ConvertFrom-Json -ErrorAction Stop
+            if ($payload.action) { $action = [string]$payload.action }
+        } catch {
+            $action = [string]$raw
+        }
+        if (-not $action) { return }
+        switch ($action.ToLowerInvariant()) {
+            'exit' { Invoke-ExitFlow; return }
+            'restart' { Invoke-ExitFlow -Restart; return }
+            'open' { Open-DshUi; return }
+            default { return }
+        }
+    } catch { }
+}
+
 # Make sure the server is running (start it hidden if not already).
 if (-not (Get-DshWeb)) { [void](Start-DshWeb) }
 $ready = Wait-DshReady
@@ -139,17 +182,25 @@ $script:notifyIcon.Visible = $true
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $mOpen = New-Object System.Windows.Forms.ToolStripMenuItem("Open Web UI")
+$mRestart = New-Object System.Windows.Forms.ToolStripMenuItem("Restart DSH Web service")
 $mStop = New-Object System.Windows.Forms.ToolStripMenuItem("Stop DSH Web service")
 $mQuit = New-Object System.Windows.Forms.ToolStripMenuItem("Exit")
 $null = $mOpen.Add_Click({ Open-DshUi })
+$null = $mRestart.Add_Click({ Invoke-ExitFlow -Restart })
 $null = $mStop.Add_Click({ Stop-DshWeb; $script:notifyIcon.ShowBalloonTip(2000, "DSH Web", "Service stopped.", [System.Windows.Forms.ToolTipIcon]::Info) })
-$null = $mQuit.Add_Click({ $script:notifyIcon.Visible = $false; Close-DshBrowserTabs; Stop-DshWeb; [System.Windows.Forms.Application]::Exit() })
+$null = $mQuit.Add_Click({ Invoke-ExitFlow })
 $null = $menu.Items.Add($mOpen)
+$null = $menu.Items.Add($mRestart)
 $null = $menu.Items.Add($mStop)
 $null = $menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 $null = $menu.Items.Add($mQuit)
 $script:notifyIcon.ContextMenuStrip = $menu
 $null = $script:notifyIcon.Add_DoubleClick({ Open-DshUi })
+
+$script:controlTimer = New-Object System.Windows.Forms.Timer
+$script:controlTimer.Interval = 1000
+$null = $script:controlTimer.Add_Tick({ Consume-ControlCommand })
+$script:controlTimer.Start()
 
 if ($ready) {
     $script:notifyIcon.ShowBalloonTip(3000, "DSH Web", "Service ready. Web UI opened.", [System.Windows.Forms.ToolTipIcon]::Info)
@@ -160,5 +211,7 @@ if ($ready) {
 [System.Windows.Forms.Application]::Run()
 
 # Clean up after Exit.
+$script:controlTimer.Stop()
+$script:controlTimer.Dispose()
 $script:notifyIcon.Dispose()
 $icon.Dispose()

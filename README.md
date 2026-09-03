@@ -33,10 +33,12 @@ dsh plugin --profile web add dsh-tray-launcher
 - **桌面图标**：生成 `DSH-Web-Tray.lnk`，指向 `wscript.exe` + 隐藏启动的 vbs，**全程无控制台窗口**（连闪现都没有）。
 - **系统托盘**：鲸鱼图标 + 右键菜单
   - Open Web UI —— 打开 Web GUI（自动带上一次性 token）
+  - Restart DSH Web service —— 执行托盘内建重启流程（Exit 后自动自启）
   - Stop DSH Web service —— 停止 `dsh web` node 进程
   - Exit —— 关闭 DSH 浏览器标签页、停止服务、移除图标
 - **设置卡片**：启用开关、GUI URL、启动 profile、自定义 `.ico`；点「创建桌面图标」即可（幂等，可重复点）。
-- **安全**：安装路由**仅限 loopback**——局域网暴露的 `dsh web` 不会把这个写文件/建快捷方式的接口暴露给远端浏览器。
+- **安全**：控制/安装路由**仅限 loopback**——局域网暴露的 `dsh web` 不会把这些写文件或控制托盘的接口暴露给远端浏览器。
+- **可调用控制接口**：新增 `exit` / `restart` 路由，可从本机直接请求托盘实例执行等效于菜单 `Exit` 的关闭流程，或执行“退出后再自启”的重启流程。
 
 ---
 
@@ -85,10 +87,32 @@ tray-launcher/
 ├── start-dsh-tray.vbs         # 隐藏启动 dsh-web-tray.ps1 的 vbs 包装
 ├── install-shortcut.ps1       # 创建桌面 .lnk 的安装脚本
 ├── DeepSeekHarness-WhaleGirl.ico
+├── tray-control.json          # host 写入的托盘控制命令（exit / restart）
 └── dsh-web.out.log / dsh-web.err.log   # 服务日志
 ```
 
 桌面快捷方式：`%USERPROFILE%\Desktop\DSH-Web-Tray.lnk`（OneDrive 桌面会被识别）。
+
+## 控制接口
+
+所有控制接口都要求：
+
+- 仅 `POST`
+- 仅 loopback 本机请求
+- 不创建新的桌面快捷方式
+
+接口：
+
+- `POST /api/dsh-tray-launcher/install`
+  - 生成/刷新托盘脚本、vbs、图标，并创建桌面快捷方式
+- `POST /api/dsh-tray-launcher/exit`
+  - 请求正在运行的托盘实例执行与菜单 `Exit` 等效的流程
+  - 若托盘实例不在，则回退为直接停止对应 profile 的 `dsh web`
+- `POST /api/dsh-tray-launcher/restart`
+  - 请求正在运行的托盘实例执行“Exit 后再自启”
+  - 若托盘实例不在，则回退为直接停止 `dsh web`，然后执行 `wscript.exe + start-dsh-tray.vbs`
+
+`restart` 路由只负责重启，不会调用 `install-shortcut.ps1`，因此不会新建桌面快捷方式。
 
 ---
 
